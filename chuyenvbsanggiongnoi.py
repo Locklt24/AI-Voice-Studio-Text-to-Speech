@@ -16,7 +16,7 @@ import datetime
 
 # --- KIỂM TRA PYGAME (CHẾ ĐỘ AN TOÀN) ---
 try:
-    import pygames
+    import pygame
     pygame.mixer.init()
     HAS_MUSIC_SUPPORT = True
 except ImportError:
@@ -332,7 +332,14 @@ class TTSApp(ttk.Window):
         if url: threading.Thread(target=self._thread_web, args=(url,), daemon=True).start()
 
     def _thread_web(self, url):
-        txt = get_text_from_url(url); self.txt_web.delete("1.0", END); self.txt_web.insert(END, clean_text_content(txt)); self.update_stats()
+        txt = get_text_from_url(url)
+        cleaned_txt = clean_text_content(txt)
+        self.after(0, lambda: self._update_web_ui(cleaned_txt))
+
+    def _update_web_ui(self, txt):
+        self.txt_web.delete("1.0", END)
+        self.txt_web.insert(END, txt)
+        self.update_stats()
 
     def process_single(self, play_now):
         raw = self.get_current_text()
@@ -345,12 +352,9 @@ class TTSApp(ttk.Window):
         rate_val = int(self.scale_rate.get())
         pitch_val = int(self.scale_pitch.get())
 
-        rate = f"{int(self.scale_rate.get()):+d}%"
-        pitch = f"{int(self.scale_pitch.get()):+d}Hz"
-        if rate_val == 0: rate_val = -5
-            
         rate = f"{rate_val:+d}%"
         pitch = f"{pitch_val:+d}Hz"
+
         if play_now:
             outfile = os.path.abspath("preview.mp3")
             srtfile = None
@@ -369,32 +373,31 @@ class TTSApp(ttk.Window):
         try:
             if play_now and os.path.exists(outfile): 
                 try: os.remove(outfile)
-                except: pass
+                except Exception as e: print(f"Lỗi xóa file tạm: {e}")
             
             asyncio.run(generate_tts(text, voice, rate, pitch, outfile, srtfile))
             
             if play_now:
-                # Nếu có Pygame thì dùng Mixer (xịn), không thì dùng os.startfile (cơ bản)
                 if HAS_MUSIC_SUPPORT:
                     voice_sound = pygame.mixer.Sound(outfile)
                     voice_channel = pygame.mixer.Channel(1)
                     voice_channel.play(voice_sound)
-                    self.lbl_status.config(text="Đang phát (Mixer)...")
+                    self.after(0, lambda: self.lbl_status.config(text="Đang phát (Mixer)..."))
                     while voice_channel.get_busy(): pygame.time.delay(100)
                     pygame.mixer.music.stop()
                 else:
                     os.startfile(outfile)
-                    self.lbl_status.config(text="Đang phát (Windows Player)...")
+                    self.after(0, lambda: self.lbl_status.config(text="Đang phát (Windows Player)..."))
 
-                self.lbl_status.config(text="Đã phát xong")
+                self.after(0, lambda: self.lbl_status.config(text="Đã phát xong"))
             else:
                 log_history("Save", outfile)
-                self.load_history_ui()
-                self.lbl_status.config(text="Đã xong!")
-                messagebox.showinfo("Thành công", f"File: {outfile}")
+                self.after(0, self.load_history_ui)
+                self.after(0, lambda: self.lbl_status.config(text="Đã xong!"))
+                self.after(0, lambda: messagebox.showinfo("Thành công", f"File: {outfile}"))
         except Exception as e:
-            self.lbl_status.config(text="Lỗi")
-            messagebox.showerror("Lỗi", str(e))
+            self.after(0, lambda: self.lbl_status.config(text="Lỗi"))
+            self.after(0, lambda: messagebox.showerror("Lỗi", str(e)))
 
     def add_batch_files(self):
         files = filedialog.askopenfilenames()
@@ -422,9 +425,15 @@ class TTSApp(ttk.Window):
                 outfile = os.path.join(out_dir, f"{fname}.mp3")
                 srtfile = os.path.join(out_dir, f"{fname}.srt") if gen_srt else None
                 asyncio.run(generate_tts(text, voice, rate, pitch, outfile, srtfile))
-                self.progress_batch['value'] = ((i+1)/total)*100
-            except: pass
-        self.btn_batch_start.config(state=NORMAL); messagebox.showinfo("Xong", "Batch complete!")
+                
+                # Cập nhật Progressbar an toàn
+                progress = ((i + 1) / total) * 100
+                self.after(0, lambda p=progress: self.progress_batch.configure(value=p))
+            except Exception as e:
+                print(f"Lỗi xử lý file {fpath}: {e}")
+        
+        self.after(0, lambda: self.btn_batch_start.config(state=NORMAL))
+        self.after(0, lambda: messagebox.showinfo("Xong", "Batch complete!"))
 
     def refresh_dict_ui(self):
         for i in self.tree_dict.get_children(): self.tree_dict.delete(i)
